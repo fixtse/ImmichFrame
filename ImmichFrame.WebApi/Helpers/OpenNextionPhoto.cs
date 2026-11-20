@@ -143,8 +143,10 @@ internal static class OpenNextionPhoto
     // known pixels), then stretch it over the tile and darken it.
     private static void DrawBlurredBackground(SKCanvas canvas, OpenNextionSource photo, SKRectI tile)
     {
-        var w = Math.Max(1, tile.Width / 6);
-        var h = Math.Max(1, tile.Height / 6);
+        // A third of the tile with a wide blur: smooth enough not to band or show
+        // blocks after the panel's RGB565 conversion.
+        var w = Math.Max(1, tile.Width / 3);
+        var h = Math.Max(1, tile.Height / 3);
         using var small = SKSurface.Create(new SKImageInfo(w, h));
         using var blurred = SKSurface.Create(new SKImageInfo(w, h));
         if (small is null || blurred is null) return;
@@ -152,7 +154,7 @@ internal static class OpenNextionPhoto
         using var smallImage = small.Snapshot();
         using (var blur = new SKPaint())
         {
-            blur.ImageFilter = SKImageFilter.CreateBlur(3, 3, SKShaderTileMode.Clamp);
+            blur.ImageFilter = SKImageFilter.CreateBlur(8, 8, SKShaderTileMode.Clamp);
             blurred.Canvas.DrawImage(smallImage, 0, 0, blur);
         }
         using var background = blurred.Snapshot();

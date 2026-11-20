@@ -140,7 +140,7 @@ namespace ImmichFrame.WebApi.Controllers
         [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
         [Produces("image/jpeg")]
         public async Task<IActionResult> GetOpenNextionImage(int width = 320, int height = 480, string fit = "contain",
-            bool split = false, bool info = false, bool back = false, CancellationToken cancellationToken = default)
+            bool split = false, string info = "", bool back = false, CancellationToken cancellationToken = default)
         {
             if ((width, height) is not ((320, 480) or (480, 320) or (240, 320) or (320, 240)))
                 return BadRequest("Use 320x480 or 240x320, or swap width and height for landscape.");
@@ -152,6 +152,10 @@ namespace ImmichFrame.WebApi.Controllers
                 case "blur": mode = OpenNextionFit.Blur; break;
                 default: return BadRequest("Fit must be contain, cover or blur.");
             }
+
+            var fields = OpenNextionFields(info);
+            if (fields is null)
+                return BadRequest("Info must be true, false or a list of date, location, album, description and people.");
 
             // Back steps through the screens already shown; the next request after
             // going back steps forward again before new photos are picked.
@@ -172,7 +176,7 @@ namespace ImmichFrame.WebApi.Controllers
                     var source = await OpenNextionPhoto.Decode(stream, cancellationToken);
                     if (source is null) continue;
                     sources.Add(source);
-                    captions.Add(info ? await OpenNextionCaption(candidate) : []);
+                    captions.Add(fields.Count > 0 ? await OpenNextionCaption(candidate, fields) : []);
                     _ = _logic.SendWebhookNotification(new AssetRequestedNotification(candidate.Id, "OpenNextion"));
                 }
                 if (sources.Count == 0)
@@ -218,19 +222,42 @@ namespace ImmichFrame.WebApi.Controllers
             return height > width;
         }
 
+        internal static readonly string[] OpenNextionFieldNames = ["date", "location", "album", "description", "people"];
+
+        // "true": the details ImmichFrame's own screen shows (its Show* settings);
+        // "false" or empty: none; otherwise a comma list of field names (drawn in the order
+        // date, place, album, description, people). Null when a name is unknown.
+        internal IReadOnlySet<string>? OpenNextionFields(string? info)
+        {
+            var value = (info ?? string.Empty).Trim().ToLowerInvariant();
+            if (value is "" or "false" or "none") return new HashSet<string>();
+            if (value == "true")
+            {
+                var set = new HashSet<string>();
+                if (_settings.ShowPhotoDate) set.Add("date");
+                if (_settings.ShowImageLocation) set.Add("location");
+                if (_settings.ShowAlbumName) set.Add("album");
+                if (_settings.ShowImageDesc) set.Add("description");
+                if (_settings.ShowPeopleDesc) set.Add("people");
+                return set;
+            }
+            var names = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            return names.All(n => OpenNextionFieldNames.Contains(n)) ? names.ToHashSet() : null;
+        }
+
         // The details ImmichFrame's own screen shows, following its Show* settings.
-        private async Task<IReadOnlyList<string>> OpenNextionCaption(AssetResponseDto asset)
+        private async Task<IReadOnlyList<string>> OpenNextionCaption(AssetResponseDto asset, IReadOnlySet<string> fields)
         {
             var lines = new List<string>();
             try
             {
-                if (_settings.ShowPhotoDate)
+                if (fields.Contains("date"))
                 {
                     var culture = new CultureInfo(_settings.Language);
                     var format = (_settings.PhotoDateFormat ?? "dd.MM.yyyy").Replace("''", "\\'");
                     lines.Add(asset.LocalDateTime.ToString(format, culture));
                 }
-                if (_settings.ShowImageLocation)
+                if (fields.Contains("location"))
                 {
                     var parts = (_settings.ImageLocationFormat ?? "City,State,Country").Split(',')
                         .Select(p => p.Trim().ToLowerInvariant() switch
@@ -243,14 +270,14 @@ namespace ImmichFrame.WebApi.Controllers
                         .Where(p => !string.IsNullOrWhiteSpace(p));
                     lines.Add(string.Join(", ", parts));
                 }
-                if (_settings.ShowAlbumName)
+                if (fields.Contains("album"))
                 {
                     var albums = await _logic.GetAlbumInfoById(asset.Id);
                     lines.Add(string.Join(", ", albums.Select(a => a.AlbumName).Where(n => !string.IsNullOrWhiteSpace(n))));
                 }
-                if (_settings.ShowImageDesc)
+                if (fields.Contains("description"))
                     lines.Add(asset.ExifInfo?.Description ?? string.Empty);
-                if (_settings.ShowPeopleDesc)
+                if (fields.Contains("people"))
                 {
                     var people = asset.People;
                     if (people is null || people.Count == 0)

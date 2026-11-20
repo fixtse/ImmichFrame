@@ -110,7 +110,9 @@ reverse), a second photo of the same orientation is shown beside or below
 it. Orientation comes from Immich's metadata; a candidate that does not
 match is shown on the next request instead.
 
-Add `info=true` to draw the photo details in the top-left corner, following
+Add `info=date,location,album` (any of `date`, `location`, `album`,
+`description` and `people`) to choose the photo details drawn in the
+top-left corner, or `info=true` to follow
 the `ShowPhotoDate`, `ShowImageLocation`, `ShowAlbumName`, `ShowImageDesc`
 and `ShowPeopleDesc` settings with `PhotoDateFormat`, `Language` and
 `ImageLocationFormat`. At most three lines are drawn. The panel keeps the
