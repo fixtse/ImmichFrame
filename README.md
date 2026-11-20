@@ -76,3 +76,32 @@ You can find a working demo [here](https://demo.immichframe.dev).
 [openweathermap-url]: https://openweathermap.org/
 [immich-github-url]: https://github.com/immich-app/immich
 [immich-api-url]: https://immich.app/docs/features/command-line-interface#obtain-the-api-key
+
+## OpenNextion Room Companion
+
+On Room Companion firmware with the ImmichFrame idle mode, enter the
+ImmichFrame base URL in the panel's **ImmichFrame server** entity, choose
+**ImmichFrame** as the **Idle screen**, and set the **Slideshow interval**.
+The panel fetches one JPEG per interval using the selected display orientation.
+No Remote WebView server is required.
+
+The native JPEG endpoint is `GET /api/Asset/OpenNextion`. It uses the
+configured ImmichFrame accounts and filters and the same authentication as
+other asset endpoints. If `AuthenticationSecret` is configured, send it in
+the `Authorization: Bearer …` request header. Use HTTPS with authentication.
+
+| Panel | Portrait | Landscape |
+| --- | --- | --- |
+| ONX3248G035 (3.5-inch) | `width=320&height=480` | `width=480&height=320` |
+| ONX2432G028 (2.8-inch) | `width=240&height=320` | `width=320&height=240` |
+
+For example, `/api/Asset/OpenNextion?width=480&height=320` returns a
+landscape JPEG. The default fit is `contain`, which preserves the full
+photo and fills any margins with black. Add `fit=cover` to fill the output
+by cropping around the centre. The standard ImmichFrame web app remains
+available for videos and browser controls.
+
+This fork publishes containers to `ghcr.io/fixtse/immichframe`. Pushes to
+`main` update `latest`, and version tags such as `v1.0.40.1` publish the
+matching image tag. Each build also publishes a `sha-<commit>` tag for
+pinning deployments.

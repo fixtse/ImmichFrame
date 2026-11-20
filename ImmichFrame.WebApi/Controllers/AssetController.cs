@@ -3,6 +3,7 @@ using ImmichFrame.Core.Api;
 using ImmichFrame.Core.Exceptions;
 using ImmichFrame.Core.Interfaces;
 using ImmichFrame.Core.Models;
+using ImmichFrame.WebApi.Helpers;
 using ImmichFrame.WebApi.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -132,6 +133,42 @@ namespace ImmichFrame.WebApi.Controllers
             return File(asset.FileStream, asset.ContentType, asset.FileName, enableRangeProcessing: true);
         }
 
+        [HttpGet("OpenNextion")]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+        [Produces("image/jpeg")]
+        public async Task<IActionResult> GetOpenNextionImage(int width = 320, int height = 480, string fit = "contain",
+            CancellationToken cancellationToken = default)
+        {
+            if ((width, height) is not ((320, 480) or (480, 320) or (240, 320) or (320, 240)))
+                return BadRequest("Use 320x480 or 240x320, or swap width and height for landscape.");
+            if (fit is not ("contain" or "cover"))
+                return BadRequest("Fit must be contain or cover.");
+
+            var photo = await GetNextImage();
+            var asset = await _logic.GetAsset(photo.Id, AssetTypeEnum.IMAGE);
+            using var owner = asset.Owner;
+            await using var stream = asset.FileStream;
+            var jpeg = await OpenNextionPhoto.Render(stream, width, height, fit == "cover", cancellationToken);
+            if (jpeg is null)
+                return Problem("The selected photo could not be decoded.", statusCode: StatusCodes.Status502BadGateway);
+
+            _ = _logic.SendWebhookNotification(new AssetRequestedNotification(photo.Id, "OpenNextion"));
+            return File(jpeg, "image/jpeg");
+        }
+
+        private async Task<AssetResponseDto> GetNextImage()
+        {
+            const int maxAttempts = 10;
+            for (int i = 0; i < maxAttempts; i++)
+            {
+                var candidate = await _logic.GetNextAsset();
+                if (candidate == null) break;
+                if (candidate.Type == AssetTypeEnum.IMAGE) return candidate;
+            }
+
+            throw new AssetNotFoundException("No image asset was found");
+        }
+
         [HttpGet("RandomImageAndInfo", Name = "GetRandomImageAndInfo")]
         [Produces("application/json")]
         public async Task<ImageResponse> GetRandomImageAndInfo(string clientIdentifier = "")
@@ -139,22 +176,7 @@ namespace ImmichFrame.WebApi.Controllers
             var sanitizedClientIdentifier = clientIdentifier.SanitizeString();
             _logger.LogDebug("Random image requested by '{sanitizedClientIdentifier}'", sanitizedClientIdentifier);
 
-            AssetResponseDto? randomAsset = null;
-            const int maxAttempts = 10;
-            for (int i = 0; i < maxAttempts; i++)
-            {
-                var candidate = await _logic.GetNextAsset();
-                if (candidate == null) break;
-                if (candidate.Type == AssetTypeEnum.IMAGE)
-                {
-                    randomAsset = candidate;
-                    break;
-                }
-            }
-
-            if (randomAsset == null)
-                throw new AssetNotFoundException("No image asset was found");
-
+            var randomAsset = await GetNextImage();
             var asset = await _logic.GetAsset(randomAsset.Id, AssetTypeEnum.IMAGE);
             var notification = new AssetRequestedNotification(randomAsset.Id, sanitizedClientIdentifier);
             _ = _logic.SendWebhookNotification(notification);

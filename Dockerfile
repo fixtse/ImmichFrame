@@ -21,10 +21,12 @@ ARG VERSION
 ENV APP_VERSION=$VERSION
 
 # Publish the app for the target architecture
-RUN dotnet publish --runtime linux-${TARGETARCH} --self-contained false -p:AssemblyVersion=$VERSION -o /app
+RUN arch="$TARGETARCH" && \
+    if [ "$arch" = amd64 ]; then arch=x64; fi && \
+    dotnet publish --runtime "linux-$arch" --self-contained false -p:AssemblyVersion="$VERSION" -o /app
 
 # Stage 3: Build frontend with Node.js
-FROM node:22-bookworm-slim AS build-node
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS build-node
 
 USER node
 WORKDIR /app
