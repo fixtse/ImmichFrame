@@ -31,5 +31,10 @@
     <InternalsVisibleTo Include="ImmichFrame.WebApi.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Caption font for OpenNextion photos: the runtime image has no system fonts. -->
+    <EmbeddedResource Include="..\immichFrame.Web\src\lib\assets\fonts\overpass\Overpass.ttf" LogicalName="OpenNextion.Overpass.ttf" />
+  </ItemGroup>
+
 
 </Project>

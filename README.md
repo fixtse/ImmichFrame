@@ -98,7 +98,22 @@ the `Authorization: Bearer …` request header. Use HTTPS with authentication.
 For example, `/api/Asset/OpenNextion?width=480&height=320` returns a
 landscape JPEG. The default fit is `contain`, which preserves the full
 photo and fills any margins with black. Add `fit=cover` to fill the output
-by cropping around the centre. The standard ImmichFrame web app remains
+by cropping around the centre, or `fit=blur` to keep the whole photo over a
+blurred, darkened copy of itself.
+
+Add `split=true` for ImmichFrame's split view: when a photo's orientation
+does not suit the screen (a portrait photo on a landscape screen, or the
+reverse), a second photo of the same orientation is shown beside or below
+it. Orientation comes from Immich's metadata; a candidate that does not
+match is shown on the next request instead.
+
+Add `info=true` to draw the photo details in the top-left corner, following
+the `ShowPhotoDate`, `ShowImageLocation`, `ShowAlbumName`, `ShowImageDesc`
+and `ShowPeopleDesc` settings with `PhotoDateFormat`, `Language` and
+`ImageLocationFormat`. At most three lines are drawn. The panel keeps the
+bottom of the screen for its own clock and weather. Add `back=true` to return to the
+previously shown screen (the last 20 are kept); the next request without it
+steps forward again before new photos are picked. The standard ImmichFrame web app remains
 available for videos and browser controls.
 
 This fork publishes containers to `ghcr.io/fixtse/immichframe`. Pushes to

@@ -133,27 +133,158 @@ namespace ImmichFrame.WebApi.Controllers
             return File(asset.FileStream, asset.ContentType, asset.FileName, enableRangeProcessing: true);
         }
 
+        // One leftover photo from a pairing attempt that did not match, shown next
+        // so split view does not skip photos.
+        private static readonly object _openNextionLock = new();
+        private static AssetResponseDto? _openNextionCarry;
+        // Recently shown screens, so a swipe back on the panel can return to them.
+        private static readonly List<List<AssetResponseDto>> _openNextionHistory = new();
+        private static int _openNextionCursor = -1;
+        private const int OpenNextionHistorySize = 20;
+
         [HttpGet("OpenNextion")]
         [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
         [Produces("image/jpeg")]
         public async Task<IActionResult> GetOpenNextionImage(int width = 320, int height = 480, string fit = "contain",
-            CancellationToken cancellationToken = default)
+            bool split = false, bool info = false, bool back = false, CancellationToken cancellationToken = default)
         {
             if ((width, height) is not ((320, 480) or (480, 320) or (240, 320) or (320, 240)))
                 return BadRequest("Use 320x480 or 240x320, or swap width and height for landscape.");
-            if (fit is not ("contain" or "cover"))
-                return BadRequest("Fit must be contain or cover.");
+            OpenNextionFit mode;
+            switch (fit)
+            {
+                case "contain": mode = OpenNextionFit.Contain; break;
+                case "cover": mode = OpenNextionFit.Cover; break;
+                case "blur": mode = OpenNextionFit.Blur; break;
+                default: return BadRequest("Fit must be contain, cover or blur.");
+            }
 
-            var photo = await GetNextImage();
-            var asset = await _logic.GetAsset(photo.Id, AssetTypeEnum.IMAGE);
-            using var owner = asset.Owner;
-            await using var stream = asset.FileStream;
-            var jpeg = await OpenNextionPhoto.Render(stream, width, height, fit == "cover", cancellationToken);
-            if (jpeg is null)
-                return Problem("The selected photo could not be decoded.", statusCode: StatusCodes.Status502BadGateway);
+            // Back steps through the screens already shown; the next request after
+            // going back steps forward again before new photos are picked.
+            List<AssetResponseDto>? assets = null;
+            lock (_openNextionLock)
+            {
+                if (back && _openNextionCursor > 0) assets = _openNextionHistory[--_openNextionCursor];
+                else if (back && _openNextionCursor == 0) assets = _openNextionHistory[0];
+                else if (!back && _openNextionCursor >= 0 && _openNextionCursor < _openNextionHistory.Count - 1)
+                    assets = _openNextionHistory[++_openNextionCursor];
+            }
+            assets ??= await PickOpenNextionAssets(split, height > width);
 
-            _ = _logic.SendWebhookNotification(new AssetRequestedNotification(photo.Id, "OpenNextion"));
-            return File(jpeg, "image/jpeg");
+            var sources = new List<OpenNextionSource>();
+            var captions = new List<IReadOnlyList<string>>();
+            try
+            {
+                foreach (var candidate in assets)
+                {
+                    var asset = await _logic.GetAsset(candidate.Id, AssetTypeEnum.IMAGE);
+                    using var owner = asset.Owner;
+                    await using var stream = asset.FileStream;
+                    var source = await OpenNextionPhoto.Decode(stream, cancellationToken);
+                    if (source is null) continue;
+                    sources.Add(source);
+                    captions.Add(info ? await OpenNextionCaption(candidate) : []);
+                    _ = _logic.SendWebhookNotification(new AssetRequestedNotification(candidate.Id, "OpenNextion"));
+                }
+                if (sources.Count == 0)
+                    return Problem("The selected photo could not be decoded.", statusCode: StatusCodes.Status502BadGateway);
+
+                var jpeg = OpenNextionPhoto.Compose(sources, captions, width, height, mode);
+                if (jpeg is null)
+                    return Problem("The photo could not be rendered.", statusCode: StatusCodes.Status500InternalServerError);
+                return File(jpeg, "image/jpeg");
+            }
+            finally
+            {
+                foreach (var source in sources) source.Dispose();
+            }
+        }
+
+        private async Task<List<AssetResponseDto>> PickOpenNextionAssets(bool split, bool screenPortrait)
+        {
+            AssetResponseDto? carried;
+            lock (_openNextionLock)
+            {
+                carried = _openNextionCarry;
+                _openNextionCarry = null;
+            }
+            var assets = new List<AssetResponseDto> { carried ?? await GetNextImage() };
+            // Like ImmichFrame's split view: a photo whose orientation does not suit
+            // the screen is paired with a second one of the same orientation.
+            if (split && OpenNextionPortrait(assets[0]) is bool firstPortrait && firstPortrait != screenPortrait)
+            {
+                var second = await _logic.GetNextAsset();
+                if (second is { Type: AssetTypeEnum.IMAGE } && second.Id != assets[0].Id)
+                {
+                    if (OpenNextionPortrait(second) == firstPortrait) assets.Add(second);
+                    else lock (_openNextionLock) _openNextionCarry ??= second;
+                }
+            }
+            lock (_openNextionLock)
+            {
+                _openNextionHistory.Add(assets);
+                if (_openNextionHistory.Count > OpenNextionHistorySize) _openNextionHistory.RemoveAt(0);
+                _openNextionCursor = _openNextionHistory.Count - 1;
+            }
+            return assets;
+        }
+
+        // Orientation from Immich's metadata, so a pairing candidate is not downloaded
+        // just to measure it. Null when the size is unknown.
+        internal static bool? OpenNextionPortrait(AssetResponseDto asset)
+        {
+            double width = asset.ExifInfo?.ExifImageWidth ?? 0, height = asset.ExifInfo?.ExifImageHeight ?? 0;
+            if (width <= 0 || height <= 0) return null;
+            if (asset.ExifInfo?.Orientation is "5" or "6" or "7" or "8") (width, height) = (height, width);
+            return height > width;
+        }
+
+        // The details ImmichFrame's own screen shows, following its Show* settings.
+        private async Task<IReadOnlyList<string>> OpenNextionCaption(AssetResponseDto asset)
+        {
+            var lines = new List<string>();
+            try
+            {
+                if (_settings.ShowPhotoDate)
+                {
+                    var culture = new CultureInfo(_settings.Language);
+                    var format = (_settings.PhotoDateFormat ?? "dd.MM.yyyy").Replace("''", "\\'");
+                    lines.Add(asset.LocalDateTime.ToString(format, culture));
+                }
+                if (_settings.ShowImageLocation)
+                {
+                    var parts = (_settings.ImageLocationFormat ?? "City,State,Country").Split(',')
+                        .Select(p => p.Trim().ToLowerInvariant() switch
+                        {
+                            "city" => asset.ExifInfo?.City,
+                            "state" => asset.ExifInfo?.State,
+                            "country" => asset.ExifInfo?.Country,
+                            _ => null
+                        })
+                        .Where(p => !string.IsNullOrWhiteSpace(p));
+                    lines.Add(string.Join(", ", parts));
+                }
+                if (_settings.ShowAlbumName)
+                {
+                    var albums = await _logic.GetAlbumInfoById(asset.Id);
+                    lines.Add(string.Join(", ", albums.Select(a => a.AlbumName).Where(n => !string.IsNullOrWhiteSpace(n))));
+                }
+                if (_settings.ShowImageDesc)
+                    lines.Add(asset.ExifInfo?.Description ?? string.Empty);
+                if (_settings.ShowPeopleDesc)
+                {
+                    var people = asset.People;
+                    if (people is null || people.Count == 0)
+                        people = (await _logic.GetAssetInfoById(asset.Id)).People;
+                    lines.Add(string.Join(", ", (people ?? []).Select(p => p.Name).Where(n => !string.IsNullOrWhiteSpace(n))));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Details are optional: show the photo without them.
+                _logger.LogWarning(ex, "OpenNextion photo details for '{id}' could not be loaded", asset.Id);
+            }
+            return lines.Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
         }
 
         private async Task<AssetResponseDto> GetNextImage()
