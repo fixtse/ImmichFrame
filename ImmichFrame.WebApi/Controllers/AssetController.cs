@@ -27,9 +27,12 @@ namespace ImmichFrame.WebApi.Controllers
         private readonly ILogger<AssetController> _logger;
         private readonly IImmichFrameLogic _logic;
         private readonly IGeneralSettings _settings;
+        private readonly OpenNextionHistory _openNextionHistory;
 
-        public AssetController(ILogger<AssetController> logger, IImmichFrameLogic logic, IGeneralSettings settings)
+        public AssetController(ILogger<AssetController> logger, IImmichFrameLogic logic, IGeneralSettings settings,
+            OpenNextionHistory openNextionHistory)
         {
+            _openNextionHistory = openNextionHistory;
             _logger = logger;
             _logic = logic;
             _settings = settings;
@@ -133,15 +136,6 @@ namespace ImmichFrame.WebApi.Controllers
             return File(asset.FileStream, asset.ContentType, asset.FileName, enableRangeProcessing: true);
         }
 
-        // One leftover photo from a pairing attempt that did not match, shown next
-        // so split view does not skip photos.
-        private static readonly object _openNextionLock = new();
-        private static AssetResponseDto? _openNextionCarry;
-        // Recently shown screens, so a swipe back on the panel can return to them.
-        private static readonly List<List<AssetResponseDto>> _openNextionHistory = new();
-        private static int _openNextionCursor = -1;
-        private const int OpenNextionHistorySize = 20;
-
         [HttpGet("OpenNextion")]
         [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
         [Produces("image/jpeg")]
@@ -161,14 +155,9 @@ namespace ImmichFrame.WebApi.Controllers
 
             // Back steps through the screens already shown; the next request after
             // going back steps forward again before new photos are picked.
-            List<AssetResponseDto>? assets = null;
-            lock (_openNextionLock)
-            {
-                if (back && _openNextionCursor > 0) assets = _openNextionHistory[--_openNextionCursor];
-                else if (back && _openNextionCursor == 0) assets = _openNextionHistory[0];
-                else if (!back && _openNextionCursor >= 0 && _openNextionCursor < _openNextionHistory.Count - 1)
-                    assets = _openNextionHistory[++_openNextionCursor];
-            }
+            // Photos come only from ImmichFrame's configured pool (accounts, albums,
+            // people and filters); the history holds photos picked from it.
+            var assets = _openNextionHistory.Step(back);
             assets ??= await PickOpenNextionAssets(split, height > width);
 
             var sources = new List<OpenNextionSource>();
@@ -200,14 +189,9 @@ namespace ImmichFrame.WebApi.Controllers
             }
         }
 
-        private async Task<List<AssetResponseDto>> PickOpenNextionAssets(bool split, bool screenPortrait)
+        private async Task<IReadOnlyList<AssetResponseDto>> PickOpenNextionAssets(bool split, bool screenPortrait)
         {
-            AssetResponseDto? carried;
-            lock (_openNextionLock)
-            {
-                carried = _openNextionCarry;
-                _openNextionCarry = null;
-            }
+            var carried = _openNextionHistory.TakeCarry();
             var assets = new List<AssetResponseDto> { carried ?? await GetNextImage() };
             // Like ImmichFrame's split view: a photo whose orientation does not suit
             // the screen is paired with a second one of the same orientation.
@@ -217,15 +201,10 @@ namespace ImmichFrame.WebApi.Controllers
                 if (second is { Type: AssetTypeEnum.IMAGE } && second.Id != assets[0].Id)
                 {
                     if (OpenNextionPortrait(second) == firstPortrait) assets.Add(second);
-                    else lock (_openNextionLock) _openNextionCarry ??= second;
+                    else _openNextionHistory.Carry(second);
                 }
             }
-            lock (_openNextionLock)
-            {
-                _openNextionHistory.Add(assets);
-                if (_openNextionHistory.Count > OpenNextionHistorySize) _openNextionHistory.RemoveAt(0);
-                _openNextionCursor = _openNextionHistory.Count - 1;
-            }
+            _openNextionHistory.Add(assets);
             return assets;
         }
 

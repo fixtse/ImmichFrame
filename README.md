@@ -85,8 +85,11 @@ ImmichFrame base URL in the panel's **ImmichFrame server** entity, choose
 The panel fetches one JPEG per interval using the selected display orientation.
 No Remote WebView server is required.
 
-The native JPEG endpoint is `GET /api/Asset/OpenNextion`. It uses the
-configured ImmichFrame accounts and filters and the same authentication as
+The native JPEG endpoint is `GET /api/Asset/OpenNextion`. It picks photos
+from the same pool as the web client, so the configured accounts, albums,
+excluded albums, people, date and rating filters all apply (videos are
+skipped). The `back=true` history and a held-over pairing photo are cleared
+when account settings change. It uses the configured ImmichFrame accounts and filters and the same authentication as
 other asset endpoints. If `AuthenticationSecret` is configured, send it in
 the `Authorization: Bearer …` request header. Use HTTPS with authentication.
 
