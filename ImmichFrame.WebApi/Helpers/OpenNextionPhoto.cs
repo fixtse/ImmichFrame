@@ -31,6 +31,7 @@ internal static class OpenNextionPhoto
 {
     private static readonly SKSamplingOptions Sampling = new(SKFilterMode.Linear, SKMipmapMode.None);
     private static readonly Lazy<SKTypeface> Typeface = new(LoadTypeface);
+    internal static SKTypeface CaptionTypeface => Typeface.Value;
 
     // Kept for callers that render one photo without a caption.
     public static async Task<byte[]?> Render(Stream stream, int width, int height, bool cover,

@@ -108,7 +108,8 @@ public class OpenNextionCompositionTests
     [Test]
     public void EllipsizesLongLines()
     {
-        using var font = new SKFont(SKTypeface.Default, 14);
+        // The embedded caption font: test containers may have no system fonts.
+        using var font = new SKFont(OpenNextionPhoto.CaptionTypeface, 14);
         var text = OpenNextionPhoto.Ellipsize(new string('W', 200), font, 100);
         Assert.Multiple(() =>
         {
