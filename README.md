@@ -131,6 +131,9 @@ pinning deployments.
 The server announces itself as `_immichframe._tcp` over mDNS, so the panel's
 web setup (ImmichFrame page) lists it like Home Assistant's discovery. Run the
 container with `network_mode: host` so the announcement reaches the network.
+Host networking binds ImmichFrame's port (8080 by default) directly on the
+host; if that port is taken, choose another with
+`ASPNETCORE_HTTP_PORTS: "8765"`. The announcement uses the same port.
 Optional environment variables: `OPENNEXTION_MDNS=false` turns it off,
 `OPENNEXTION_MDNS_NAME` sets the shown name, `OPENNEXTION_URL` sets the address
 panels should use (for example behind a reverse proxy) and
