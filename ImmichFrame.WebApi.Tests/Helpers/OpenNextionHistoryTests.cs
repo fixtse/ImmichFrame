@@ -15,7 +15,7 @@ public class OpenNextionHistoryTests
     public void StepsBackAndForwardThroughShownScreens()
     {
         var history = new OpenNextionHistory();
-        IReadOnlyList<AssetResponseDto> a = [Asset()], b = [Asset()];
+        var a = new OpenNextionScreen([Asset()]); var b = new OpenNextionScreen([Asset()]);
         history.Add(a);
         history.Add(b);
         Assert.Multiple(() =>
@@ -31,8 +31,8 @@ public class OpenNextionHistoryTests
     {
         var provider = new Mock<ISettingsProvider>();
         var history = new OpenNextionHistory(provider.Object);
-        history.Add([Asset()]);
-        history.Add([Asset()]);
+        history.Add(new OpenNextionScreen([Asset()]));
+        history.Add(new OpenNextionScreen([Asset()]));
         history.Carry(Asset());
         provider.Raise(p => p.SettingsChanged += null,
             new SettingsChangedEventArgs { NewSettings = Mock.Of<IServerSettings>(), AccountsChanged = true });
@@ -40,6 +40,21 @@ public class OpenNextionHistoryTests
         {
             Assert.That(history.Step(back: true), Is.Null);
             Assert.That(history.TakeCarry(), Is.Null);
+        });
+    }
+
+    [Test]
+    public async Task HandsOverThePreparedScreenOnlyForTheSameOptions()
+    {
+        var history = new OpenNextionHistory();
+        var screen = new OpenNextionScreen([Asset()]);
+        history.Prepare("a", () => Task.FromResult<OpenNextionScreen?>(screen));
+        Assert.That(await history.TakePrepared("b"), Is.Null);
+        history.Prepare("a", () => Task.FromResult<OpenNextionScreen?>(screen));
+        Assert.Multiple(async () =>
+        {
+            Assert.That(await history.TakePrepared("a"), Is.SameAs(screen));
+            Assert.That(await history.TakePrepared("a"), Is.Null, "taken once");
         });
     }
 }

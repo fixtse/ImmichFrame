@@ -161,31 +161,66 @@ namespace ImmichFrame.WebApi.Controllers
             // going back steps forward again before new photos are picked.
             // Photos come only from ImmichFrame's configured pool (accounts, albums,
             // people and filters); the history holds photos picked from it.
-            var assets = _openNextionHistory.Step(back);
-            assets ??= await PickOpenNextionAssets(split, height > width);
+            var screenPortrait = height > width;
+            var key = $"{width}x{height}|{fit}|{string.Join(',', fields.Order())}";
+            var renderKey = key;
+            var pickKey = $"{key}|{split}";
+            var screen = _openNextionHistory.Step(back);
+            if (screen is null)
+            {
+                screen = await _openNextionHistory.TakePrepared(pickKey)
+                         ?? await PickOpenNextionScreen(split, screenPortrait);
+                if (screen is null)
+                    return Problem("No photo could be loaded.", statusCode: StatusCodes.Status502BadGateway);
+                _openNextionHistory.Add(screen);
+            }
 
+            var jpeg = screen.Rendered(renderKey) ?? await RenderOpenNextion(screen, renderKey, width, height, mode, fields);
+            if (jpeg is null)
+                return Problem("The selected photo could not be decoded.", statusCode: StatusCodes.Status502BadGateway);
+            foreach (var asset in screen.Assets)
+                _ = _logic.SendWebhookNotification(new AssetRequestedNotification(asset.Id, "OpenNextion"));
+
+            // Get the following screen ready while the panel shows this one.
+            if (_openNextionHistory.AtNewest)
+                _openNextionHistory.Prepare(pickKey, async () =>
+                {
+                    try
+                    {
+                        var next = await PickOpenNextionScreen(split, screenPortrait);
+                        if (next != null) await RenderOpenNextion(next, renderKey, width, height, mode, fields);
+                        return next;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Preparing the next OpenNextion photo failed");
+                        return null;
+                    }
+                });
+            return File(jpeg, "image/jpeg");
+        }
+
+        private async Task<byte[]?> RenderOpenNextion(OpenNextionScreen screen, string key, int width, int height,
+            OpenNextionFit mode, IReadOnlySet<string> fields)
+        {
             var sources = new List<OpenNextionSource>();
             var captions = new List<IReadOnlyList<string>>();
             try
             {
-                foreach (var candidate in assets)
+                foreach (var candidate in screen.Assets)
                 {
                     var asset = await _logic.GetAsset(candidate.Id, AssetTypeEnum.IMAGE);
                     using var owner = asset.Owner;
                     await using var stream = asset.FileStream;
-                    var source = await OpenNextionPhoto.Decode(stream, cancellationToken);
+                    var source = await OpenNextionPhoto.Decode(stream, CancellationToken.None);
                     if (source is null) continue;
                     sources.Add(source);
                     captions.Add(fields.Count > 0 ? await OpenNextionCaption(candidate, fields) : []);
-                    _ = _logic.SendWebhookNotification(new AssetRequestedNotification(candidate.Id, "OpenNextion"));
                 }
-                if (sources.Count == 0)
-                    return Problem("The selected photo could not be decoded.", statusCode: StatusCodes.Status502BadGateway);
-
+                if (sources.Count == 0) return null;
                 var jpeg = OpenNextionPhoto.Compose(sources, captions, width, height, mode);
-                if (jpeg is null)
-                    return Problem("The photo could not be rendered.", statusCode: StatusCodes.Status500InternalServerError);
-                return File(jpeg, "image/jpeg");
+                if (jpeg != null) screen.Store(key, jpeg);
+                return jpeg;
             }
             finally
             {
@@ -193,7 +228,7 @@ namespace ImmichFrame.WebApi.Controllers
             }
         }
 
-        private async Task<IReadOnlyList<AssetResponseDto>> PickOpenNextionAssets(bool split, bool screenPortrait)
+        private async Task<OpenNextionScreen?> PickOpenNextionScreen(bool split, bool screenPortrait)
         {
             var carried = _openNextionHistory.TakeCarry();
             var assets = new List<AssetResponseDto> { carried ?? await GetNextImage() };
@@ -208,8 +243,7 @@ namespace ImmichFrame.WebApi.Controllers
                     else _openNextionHistory.Carry(second);
                 }
             }
-            _openNextionHistory.Add(assets);
-            return assets;
+            return new OpenNextionScreen(assets);
         }
 
         // Orientation from Immich's metadata, so a pairing candidate is not downloaded
