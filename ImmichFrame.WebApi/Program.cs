@@ -99,6 +99,7 @@ builder.Services.AddSingleton<IGeneralSettings, LiveGeneralSettings>();
 builder.Services.AddSingleton<IClientSettings>(srv => srv.GetRequiredService<IGeneralSettings>());
 builder.Services.AddSingleton<IServerBehaviorSettings>(srv => srv.GetRequiredService<IGeneralSettings>());
 builder.Services.AddSingleton(srv => new ImmichFrame.WebApi.Helpers.OpenNextionHistory(srv.GetRequiredService<ISettingsProvider>()));
+builder.Services.AddHostedService<ImmichFrame.WebApi.Helpers.OpenNextionMdns>();
 
 // Register services
 builder.Services.AddSingleton<IWeatherService, OpenWeatherMapService>();

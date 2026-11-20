@@ -125,3 +125,14 @@ This fork publishes containers to `ghcr.io/fixtse/immichframe`. Pushes to
 `main` update `latest`, and version tags such as `v1.0.40.1` publish the
 matching image tag. Each build also publishes a `sha-<commit>` tag for
 pinning deployments.
+
+### Discovery
+
+The server announces itself as `_immichframe._tcp` over mDNS, so the panel's
+web setup (ImmichFrame page) lists it like Home Assistant's discovery. Run the
+container with `network_mode: host` so the announcement reaches the network.
+Optional environment variables: `OPENNEXTION_MDNS=false` turns it off,
+`OPENNEXTION_MDNS_NAME` sets the shown name, `OPENNEXTION_URL` sets the address
+panels should use (for example behind a reverse proxy) and
+`OPENNEXTION_MDNS_PORT` sets the port when it differs from
+`ASPNETCORE_HTTP_PORTS`/`ASPNETCORE_URLS` (default 8080).
